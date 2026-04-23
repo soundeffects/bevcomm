@@ -1,110 +1,100 @@
 use bevy::{
     asset::RenderAssetUsages,
+    platform::collections::HashMap,
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
-use nokhwa::{
-    pixel_format::RgbAFormat,
-    utils::{CameraIndex, RequestedFormat, RequestedFormatType},
-    Camera, NokhwaError,
-};
+use nokhwa::{pixel_format::RgbAFormat, utils::RequestedFormat, Camera, NokhwaError};
+
+pub use nokhwa::utils::{CameraIndex, RequestedFormatType};
 
 pub struct BevommsPlugin;
 
 impl Plugin for BevommsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, update_video_streams.pipe(print_error));
+        app.insert_non_send_resource(Webcams::default())
+            .add_systems(Update, (update_webcams, cleanup_webcams));
     }
 }
 
-pub enum VideoSource {
-    Webcam { index: u32 },
-    Network,
+#[derive(Default)]
+pub struct Webcams {
+    instances: HashMap<CameraIndex, (Camera, Handle<Image>)>,
 }
 
-#[derive(Component)]
-pub struct Video {
-    source: VideoSource,
-    target: Handle<Image>,
-}
-
-impl Video {
-    pub fn new(
-        source: VideoSource,
+impl Webcams {
+    pub fn open(
+        &mut self,
         mut images: ResMut<Assets<Image>>,
-    ) -> Result<Self, NokhwaError> {
-        match source {
-            VideoSource::Webcam { index } => {
-                let camera = Camera::new(
-                    CameraIndex::Index(index),
-                    RequestedFormat::new::<RgbAFormat>(
-                        RequestedFormatType::AbsoluteHighestFrameRate,
-                    ),
-                )?;
-                let (width, height) = (camera.resolution().width(), camera.resolution().height());
-                Ok(Self {
-                    source,
-                    target: images.add(Image::new(
-                        Extent3d {
-                            width,
-                            height,
-                            ..default()
-                        },
-                        TextureDimension::D2,
-                        vec![255; (width * height * 4) as usize],
-                        TextureFormat::Rgba8UnormSrgb,
-                        RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
-                    )),
-                })
-            }
-            _ => {
-                todo!()
-            }
+        index: CameraIndex,
+        format_type: RequestedFormatType,
+    ) -> Result<Handle<Image>, NokhwaError> {
+        let mut camera = Camera::new(
+            index.clone(),
+            RequestedFormat::new::<RgbAFormat>(format_type),
+        )?;
+        camera.open_stream()?;
+
+        let (width, height) = (camera.resolution().width(), camera.resolution().height());
+        let handle = images.add(Image::new(
+            Extent3d {
+                width,
+                height,
+                ..default()
+            },
+            TextureDimension::D2,
+            vec![255; (width * height * 4) as usize],
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
+        ));
+        let weak_handle = handle.clone();
+
+        self.instances.insert(index, (camera, handle));
+        Ok(weak_handle)
+    }
+
+    pub fn close(&mut self, index: CameraIndex) -> Result<(), NokhwaError> {
+        if let Some((camera, _target)) = self.instances.get_mut(&index) {
+            camera.stop_stream()?;
+            self.instances.remove(&index);
+            // TODO: Delete target images
         }
+        Ok(())
     }
 
-    pub fn image_handle(&self) -> Handle<Image> {
-        self.target.clone()
-    }
-}
-
-fn update_video_streams(videos: Query<&Video>, mut images: ResMut<Assets<Image>>) -> Result<()> {
-    for video in videos {
-        if let Some(image) = images.get_mut(&video.image_handle()) {
-            match video.source {
-                VideoSource::Webcam { index } => {
-                    let mut camera = Camera::new(
-                        CameraIndex::Index(index),
-                        RequestedFormat::new::<RgbAFormat>(
-                            RequestedFormatType::AbsoluteHighestFrameRate,
-                        ),
-                    )?;
-
-                    camera.open_stream()?;
-
-                    let frame = camera.frame()?;
-
-                    camera.stop_stream()?;
-
-                    if let Some(data) = &mut image.data {
-                        println!("old: {}, new: {}", data.len(), frame.buffer().len());
-                        if data.len() == frame.buffer().len() {
-                            data.copy_from_slice(frame.buffer());
-                        }
+    fn update_all(&mut self, mut images: ResMut<Assets<Image>>) {
+        // TODO: Test random image updates to see if Bevy renders image updates as expected
+        for (_index, (camera, target)) in &mut self.instances {
+            if let Ok(frame) = camera.frame() {
+                if let Some(data) = images.get_mut(target).and_then(|image| image.data.as_mut()) {
+                    println!("old: {}, new: {}", data.len(), frame.buffer().len());
+                    if data.len() == frame.buffer().len() {
+                        data.copy_from_slice(frame.buffer());
                     }
                 }
-                _ => {
-                    todo!()
-                }
+            } else {
+                // TODO: Close the camera and print a warning if it failed
             }
         }
     }
-    Ok(())
+
+    pub fn close_all(&mut self) -> Result<(), NokhwaError> {
+        for (_index, (camera, _target)) in &mut self.instances {
+            camera.stop_stream()?;
+            // TODO: Delete target images
+        }
+        self.instances.clear();
+        Ok(())
+    }
 }
 
-fn print_error(In(result): In<Result<()>>) {
-    if let Err(error) = result {
-        warn!("Error from piped system: {:?}", error);
+fn update_webcams(mut webcams: NonSendMut<Webcams>, images: ResMut<Assets<Image>>) {
+    webcams.update_all(images);
+}
+
+fn cleanup_webcams(app_exit: MessageReader<AppExit>, mut webcams: NonSendMut<Webcams>) {
+    if !app_exit.is_empty() && let Err(error) = webcams.close_all() {
+        warn!("Error when closing webcams: {:?}", error);
     }
 }
 

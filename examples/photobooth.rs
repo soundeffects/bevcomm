@@ -8,10 +8,14 @@ fn main() {
         .run();
 }
 
-fn setup(mut commands: Commands, images: ResMut<Assets<Image>>) {
+fn setup(mut commands: Commands, mut webcams: NonSendMut<Webcams>, images: ResMut<Assets<Image>>) {
     commands.spawn(Camera2d);
 
-    if let Ok(video) = Video::new(VideoSource::Webcam { index: 0 }, images) {
+    if let Ok(image_handle) = webcams.open(
+        images,
+        CameraIndex::Index(0),
+        RequestedFormatType::AbsoluteHighestFrameRate,
+    ) {
         commands.spawn((
             Node {
                 width: percent(100),
@@ -21,8 +25,7 @@ fn setup(mut commands: Commands, images: ResMut<Assets<Image>>) {
                 ..default()
             },
             children![(
-                ImageNode::new(video.image_handle()),
-                video,
+                ImageNode::new(image_handle),
                 Node {
                     border: px(5.).all(),
                     padding: px(10.).all(),
@@ -34,6 +37,6 @@ fn setup(mut commands: Commands, images: ResMut<Assets<Image>>) {
             )],
         ));
     } else {
-        println!("Could not find webcam");
+        println!("Could not open webcam");
     }
 }
