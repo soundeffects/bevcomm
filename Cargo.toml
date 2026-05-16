@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 bevy = "0.18.1"
 nokhwa = { version = "0.10.10", features = ["input-native"] }
+rand = "0.10.1"

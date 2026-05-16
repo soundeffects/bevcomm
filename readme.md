@@ -1,4 +1,4 @@
-# Bevomms
+# Bevcomm
 A voice and video streaming plugin for the Bevy game engine.
 
 ## References

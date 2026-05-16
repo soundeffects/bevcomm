@@ -7,6 +7,7 @@ use bevy::{
 use nokhwa::{pixel_format::RgbAFormat, utils::RequestedFormat, Camera, NokhwaError};
 
 pub use nokhwa::utils::{CameraIndex, RequestedFormatType};
+use rand::random_range;
 
 pub struct BevommsPlugin;
 
@@ -64,17 +65,23 @@ impl Webcams {
 
     fn update_all(&mut self, mut images: ResMut<Assets<Image>>) {
         // TODO: Test random image updates to see if Bevy renders image updates as expected
-        for (_index, (camera, target)) in &mut self.instances {
-            if let Ok(frame) = camera.frame() {
-                if let Some(data) = images.get_mut(target).and_then(|image| image.data.as_mut()) {
-                    println!("old: {}, new: {}", data.len(), frame.buffer().len());
-                    if data.len() == frame.buffer().len() {
-                        data.copy_from_slice(frame.buffer());
-                    }
+        for (_index, (_camera, target)) in &mut self.instances {
+            if let Some(data) = images.get_mut(target).and_then(|image| image.data.as_mut()) {
+                for _ in 0..1000 {
+                    let index = random_range(0..data.len());
+                    data[index] = random_range(0..255);
                 }
-            } else {
-                // TODO: Close the camera and print a warning if it failed
             }
+            // if let Ok(frame) = camera.frame() {
+            //     if let Some(data) = images.get_mut(target).and_then(|image| image.data.as_mut()) {
+            //         println!("old: {}, new: {}", data.len(), frame.buffer().len());
+            //         if data.len() == frame.buffer().len() {
+            //             data.copy_from_slice(frame.buffer());
+            //         }
+            //     }
+            // } else {
+            //     // TODO: Close the camera and print a warning if it failed
+            // }
         }
     }
 
